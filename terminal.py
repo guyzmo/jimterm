@@ -3,8 +3,8 @@
 # Jim Paris <jim@jtan.com>
 
 # Simple terminal program for serial devices.  Supports setting
-# baudrates and simple LF->CRLF mapping on input, but does not
-# configure flow control, carrier detection, etc.
+# baudrates and simple LF->CRLF mapping on input, and basic
+# flow control, but nothing fancy.
 
 # ^C quits.  There is no escaping, so you can't currently send this
 # character to the remote host.  Piping input or output should work.
@@ -284,6 +284,8 @@ if __name__ == "__main__":
                         help="Don't use colors in output")
     parser.add_argument("--raw", "-r", action="store_true",
                         help="Don't escape unprintable characters")
+    parser.add_argument("--flow", "-f", action="store_true",
+                        help="Enable RTS/CTS flow control")
 
     args = parser.parse_args()
 
@@ -302,7 +304,7 @@ if __name__ == "__main__":
             sys.stderr.write("error: %s specified more than once\n" % node)
             raise SystemExit(1)
         try:
-            dev = serial.Serial(node, baud)
+            dev = serial.Serial(node, baud, rtscts = args.flow)
         except serial.serialutil.SerialException:
             sys.stderr.write("error opening %s\n" % node)
             raise SystemExit(1)
