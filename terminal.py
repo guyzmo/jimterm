@@ -21,17 +21,19 @@ import threading
 import traceback
 import time
 import signal
+import fcntl
 
 # Need OS-specific method for getting keyboard input.
 if os.name == 'nt':
     import msvcrt
     class Console:
         def __init__(self):
-            pass
+            self.tty = True
         def cleanup(self):
             pass
         def getkey(self):
-            while 1:
+            start = time.time()
+            while True:
                 z = msvcrt.getch()
                 if z == '\0' or z == '\xe0': # function keys
                     msvcrt.getch()
@@ -39,37 +41,38 @@ if os.name == 'nt':
                     if z == '\r':
                         return '\n'
                     return z
+                if (time.time() - start) > 0.1:
+                    return None
 elif os.name == 'posix':
     import termios, select
     class Console:
         def __init__(self):
             self.fd = sys.stdin.fileno()
-            try:
+            if os.isatty(self.fd):
+                self.tty = True
                 self.old = termios.tcgetattr(self.fd)
                 tc = termios.tcgetattr(self.fd)
                 tc[3] = tc[3] & ~termios.ICANON & ~termios.ECHO & ~termios.ISIG
                 tc[6][termios.VMIN] = 1
                 tc[6][termios.VTIME] = 0
                 termios.tcsetattr(self.fd, termios.TCSANOW, tc)
-            except termios.error:
-                # ignore errors, so we can pipe stuff to this script
-                pass
+            else:
+                self.tty = False
+            fl = fcntl.fcntl(self.fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
         def cleanup(self):
-            try:
+            if self.tty:
                 termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.old)
-            except:
-                # ignore errors, so we can pipe stuff to this script
-                pass
         def getkey(self):
             # Return -1 if we don't get input in 0.1 seconds, so that
             # the main code can check the "alive" flag and respond to SIGINT.
             [r, w, x] = select.select([self.fd], [], [self.fd], 0.1)
             if r:
-                return os.read(self.fd, 1)
+                return os.read(self.fd, 65536)
             elif x:
                 return ''
             else:
-                return -1
+                return None
 else:
     raise ("Sorry, no terminal implementation for your platform (%s) "
            "available." % sys.platform)
@@ -112,7 +115,7 @@ class Jimterm:
             self.color.setup(len(serials))
 
         self.serials = serials
-        self.suppress_write_bytes = suppress_write_bytes or ""
+        self.suppress_write_bytes = suppress_write_bytes
         self.suppress_read_firstnull = suppress_read_firstnull
         self.last_color = ""
         self.threads = []
@@ -203,24 +206,27 @@ class Jimterm:
                 try:
                     c = self.console.getkey()
                 except KeyboardInterrupt:
-                    c = '\x03'
-                if c == '\x03':
                     self.stop()
                     return
-                elif c == -1:
-                    # No input, try again
+                if c is None:
+                    # No input, try again.
                     continue
+                elif self.console.tty and '\x03' in c:
+                    # Try to catch ^C that didn't trigger KeyboardInterrupt
+                    self.stop()
+                    return
                 elif c == '':
-                    # EOF on input.  Wait a tiny bit so we can
+                    # Probably EOF on input.  Wait a tiny bit so we can
                     # flush the remaining input, then stop.
                     time.sleep(0.25)
                     self.stop()
                     return
-                elif c in self.suppress_write_bytes:
-                    # Don't send these bytes
-                    continue
                 else:
-                    # send character
+                    # Remove bytes we don't want to send
+                    if self.suppress_write_bytes is not None:
+                        c = c.translate(None, self.suppress_write_bytes)
+
+                    # Send character
                     if self.transmit_all:
                         for serial in self.serials:
                             serial.write(c)
