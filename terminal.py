@@ -242,7 +242,7 @@ class Jimterm:
     def run(self):
         # Set all serial port timeouts to 0.1 sec
         saved_timeouts = []
-        for (n, serial) in enumerate(self.serials):
+        for serial in self.serials:
             saved_timeouts.append(serial.timeout)
             serial.timeout = 0.1
 
@@ -254,8 +254,8 @@ class Jimterm:
         self.join()
 
         # Restore serial port timeouts
-        for (n, serial) in enumerate(self.serials):
-            serial.timeout = saved_timeouts[n]
+        for (serial, timeout) in zip(self.serials, saved_timeouts):
+            serial.timeout = timeout
 
         # Cleanup
         print self.color.reset # and a newline
