@@ -246,6 +246,12 @@ class Jimterm:
             saved_timeouts.append(serial.timeout)
             serial.timeout = 0.1
 
+        # Work around https://sourceforge.net/p/pyserial/bugs/151/
+        saved_writeTimeouts = []
+        for serial in self.serials:
+            saved_writeTimeouts.append(serial.writeTimeout)
+            serial.writeTimeout = 1000000
+
         # Handle SIGINT gracefully
         signal.signal(signal.SIGINT, lambda *args: self.stop())
 
@@ -254,8 +260,10 @@ class Jimterm:
         self.join()
 
         # Restore serial port timeouts
-        for (serial, timeout) in zip(self.serials, saved_timeouts):
-            serial.timeout = timeout
+        for (serial, saved) in zip(self.serials, saved_timeouts):
+            serial.timeout = saved
+        for (serial, saved) in zip(self.serials, saved_writeTimeouts):
+            serial.writeTimeout = saved
 
         # Cleanup
         print self.color.reset # and a newline
