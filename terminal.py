@@ -107,7 +107,7 @@ class Jimterm:
                  suppress_read_firstnull = True,
                  transmit_all = False,
                  add_cr = False,
-                 raw = False,
+                 raw = True,
                  color = True):
 
         self.color = JimtermColor()
@@ -285,8 +285,16 @@ if __name__ == "__main__":
                         help="Serial device.  Specify DEVICE@BAUD for "
                         "per-device baudrates.")
 
-    parser.add_argument("--quiet", "-q", action="store_true",
-                        help="Less verbose output (omit header)")
+    group = parser.add_mutually_exclusive_group(required = False)
+    group.add_argument("--quiet", "-q", action="store_true",
+                       default=argparse.SUPPRESS,
+                       help="Don't print header "
+                       "(default, if stdout is not a tty)")
+    group.add_argument("--no-quiet", "-Q", action="store_true",
+                       default=argparse.SUPPRESS,
+                       help="Print header at startup "
+                       "(default, if stdout is a tty)")
+
     parser.add_argument("--baudrate", "-b", metavar="BAUD", type=int,
                         help="Default baudrate for all devices", default=115200)
     parser.add_argument("--crlf", "-c", action="store_true",
@@ -296,12 +304,24 @@ if __name__ == "__main__":
                         "the first one")
     parser.add_argument("--mono", "-m", action="store_true",
                         help="Don't use colors in output")
-    parser.add_argument("--raw", "-r", action="store_true",
-                        help="Don't escape unprintable characters")
     parser.add_argument("--flow", "-f", action="store_true",
                         help="Enable RTS/CTS flow control")
 
+    group = parser.add_mutually_exclusive_group(required = False)
+    group.add_argument("--raw", "-r", action="store_true",
+                       default=argparse.SUPPRESS,
+                       help="Output characters directly "
+                       "(default, if stdout is not a tty)")
+    group.add_argument("--no-raw", "-R", action="store_true",
+                       default=argparse.SUPPRESS,
+                       help="Quote unprintable characters "
+                       "(default, if stdout is a tty)")
+
     args = parser.parse_args()
+
+    piped = not sys.stdout.isatty()
+    raw = "raw" in args or (piped and "no_raw" not in args)
+    quiet = "quiet" in args or (piped and "no_quiet" not in args)
 
     devs = []
     nodes = []
@@ -329,8 +349,8 @@ if __name__ == "__main__":
     term = Jimterm(devs,
                    transmit_all = args.all,
                    add_cr = args.crlf,
-                   raw = args.raw,
+                   raw = raw,
                    color = (os.name == "posix" and not args.mono))
-    if not args.quiet:
+    if not quiet:
         term.print_header(nodes, bauds)
     term.run()
