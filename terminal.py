@@ -123,13 +123,15 @@ class Jimterm:
         self.add_cr = add_cr
         self.raw = raw
 
-    def print_header(self, nodes, bauds):
+    def print_header(self, nodes, bauds, output = sys.stdout, piped = False):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
-            print (self.color.code(n)
-                   + node + ", " + str(baud) + " baud"
-                   + self.color.reset)
-        print "^C to exit"
-        print "----------"
+            output.write(self.color.code(n)
+                         + node + ", " + str(baud) + " baud"
+                         + self.color.reset + "\n")
+        if not piped:
+            output.write("^C to exit\n")
+            output.write("----------\n")
+        output.flush()
 
     def start(self):
         self.alive = True
@@ -352,5 +354,5 @@ if __name__ == "__main__":
                    raw = raw,
                    color = (os.name == "posix" and not args.mono))
     if not quiet:
-        term.print_header(nodes, bauds)
+        term.print_header(nodes, bauds, sys.stderr, piped)
     term.run()
