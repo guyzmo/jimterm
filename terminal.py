@@ -27,8 +27,9 @@ import fcntl
 if os.name == 'nt':
     import msvcrt
     class Console:
-        def __init__(self):
+        def __init__(self, bufsize = 65536):
             self.tty = True
+            self.bufsize = bufsize
         def cleanup(self):
             pass
         def getkey(self):
@@ -46,7 +47,8 @@ if os.name == 'nt':
 elif os.name == 'posix':
     import termios, select
     class Console:
-        def __init__(self):
+        def __init__(self, bufsize = 65536):
+            self.bufsize = bufsize
             self.fd = sys.stdin.fileno()
             if os.isatty(self.fd):
                 self.tty = True
@@ -68,7 +70,7 @@ elif os.name == 'posix':
             # the main code can check the "alive" flag and respond to SIGINT.
             [r, w, x] = select.select([self.fd], [], [self.fd], 0.1)
             if r:
-                return os.read(self.fd, 65536)
+                return os.read(self.fd, self.bufsize)
             elif x:
                 return ''
             else:
@@ -108,7 +110,8 @@ class Jimterm:
                  transmit_all = False,
                  add_cr = False,
                  raw = True,
-                 color = True):
+                 color = True,
+                 bufsize = 65536):
 
         self.color = JimtermColor()
         if color:
@@ -122,6 +125,7 @@ class Jimterm:
         self.transmit_all = transmit_all
         self.add_cr = add_cr
         self.raw = raw
+        self.bufsize = bufsize
 
     def print_header(self, nodes, bauds, output = sys.stdout, piped = False):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
@@ -144,7 +148,7 @@ class Jimterm:
                 ))
 
         # console->serial
-        self.console = Console()
+        self.console = Console(self.bufsize)
         self.threads.append(threading.Thread(target = self.writer))
 
         # start all threads
@@ -308,6 +312,8 @@ if __name__ == "__main__":
                         help="Don't use colors in output")
     parser.add_argument("--flow", "-f", action="store_true",
                         help="Enable RTS/CTS flow control")
+    parser.add_argument("--bufsize", "-z", metavar="SIZE", type=int,
+                        help="Buffer size for reads and writes", default=65536)
 
     group = parser.add_mutually_exclusive_group(required = False)
     group.add_argument("--raw", "-r", action="store_true",
@@ -352,7 +358,8 @@ if __name__ == "__main__":
                    transmit_all = args.all,
                    add_cr = args.crlf,
                    raw = raw,
-                   color = (os.name == "posix" and not args.mono))
+                   color = (os.name == "posix" and not args.mono),
+                   bufsize = args.bufsize)
     if not quiet:
         term.print_header(nodes, bauds, sys.stderr, piped)
     term.run()
