@@ -22,14 +22,15 @@ import traceback
 import time
 import signal
 import fcntl
+import string
 
 # Need OS-specific method for getting keyboard input.
 if os.name == 'nt':
     import msvcrt
     class Console:
-        def __init__(self, bufsize = 65536):
+        def __init__(self, bufsize = 1):
+            # Buffer size > 1 not supported on Windows
             self.tty = True
-            self.bufsize = bufsize
         def cleanup(self):
             pass
         def getkey(self):
@@ -44,9 +45,11 @@ if os.name == 'nt':
                     return z
                 if (time.time() - start) > 0.1:
                     return None
+
     class MySerial(serial.Serial):
         def nonblocking_read(self, size=1):
-            return self.read(size)
+            # Buffer size > 1 not supported on Windows
+            return self.read(1)
 elif os.name == 'posix':
     import termios, select, errno
     class Console:
@@ -63,8 +66,6 @@ elif os.name == 'posix':
                 termios.tcsetattr(self.fd, termios.TCSANOW, tc)
             else:
                 self.tty = False
-            fl = fcntl.fcntl(self.fd, fcntl.F_GETFL)
-            fcntl.fcntl(self.fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
         def cleanup(self):
             if self.tty:
                 termios.tcsetattr(self.fd, termios.TCSAFLUSH, self.old)
@@ -78,9 +79,10 @@ elif os.name == 'posix':
                 return ''
             else:
                 return None
+
     class MySerial(serial.Serial):
-        def nonblocking_read(self, size=1, timeout = 0.1):
-            [r, w, x] = select.select([self.fd], [], [self.fd], timeout)
+        def nonblocking_read(self, size=1):
+            [r, w, x] = select.select([self.fd], [], [self.fd], self._timeout)
             if r:
                 try:
                     return os.read(self.fd, size)
@@ -187,9 +189,9 @@ class Jimterm:
     def reader(self, serial, color):
         """loop and copy serial->console"""
         first = True
+        printable = string.printable.translate(None, '\x0b\x0c')
         try:
             while self.alive:
-                # For a POSIX system, do a not-retarded read.
                 data = serial.nonblocking_read(self.bufsize)
                 if not data or data == "":
                     continue
@@ -210,22 +212,21 @@ class Jimterm:
                     data = data.replace('\n', '\r\n')
 
                 if not self.raw:
-                    # Escape unprintable chars
-                    data = data.encode('unicode_escape')
-                    # But these are OK, change them back
-                    data = data.replace("\\n", "\n")
-                    data = data.replace("\\r", "\r")
-                    data = data.replace("\\t", "\t")
+                    def quote(c):
+                        if c in printable:
+                            return c
+                        return '\\x%02x' % ord(c)
+                    data = "".join([quote(c) for c in data])
 
                 sys.stdout.write(data)
                 sys.stdout.flush()
         except Exception as e:
+            self.console.cleanup()
             sys.stdout.write(color)
             sys.stdout.flush()
             traceback.print_exc()
             sys.stdout.write(self.color.reset)
             sys.stdout.flush()
-            self.console.cleanup()
             os._exit(1)
 
     def writer(self):
@@ -262,10 +263,10 @@ class Jimterm:
                     else:
                         self.serials[0].write(c)
         except Exception as e:
+            self.console.cleanup()
             sys.stdout.write(self.color.reset)
             sys.stdout.flush()
             traceback.print_exc()
-            self.console.cleanup()
             os._exit(1)
 
     def run(self):
@@ -295,7 +296,7 @@ class Jimterm:
             serial.writeTimeout = saved
 
         # Cleanup
-        print self.color.reset # and a newline
+        sys.stdout.write(self.color.reset + "\n")
         self.console.cleanup()
 
 if __name__ == "__main__":
