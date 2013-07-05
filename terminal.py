@@ -145,18 +145,21 @@ class Jimterm:
         self.raw = raw
         self.bufsize = bufsize
 
-    def print_header(self, nodes, bauds, output = sys.stdout, piped = False):
+    def print_header(self, nodes, bauds, output = sys.stdout):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
             output.write(self.color.code(n)
                          + node + ", " + str(baud) + " baud"
                          + self.color.reset + "\n")
-        if not piped:
+        if sys.stdin.isatty():
             output.write("^C to exit\n")
             output.write("----------\n")
         output.flush()
 
     def start(self):
         self.alive = True
+
+        # Set up console
+        self.console = Console(self.bufsize)
 
         # serial->console, all devices
         for (n, serial) in enumerate(self.serials):
@@ -166,7 +169,6 @@ class Jimterm:
                 ))
 
         # console->serial
-        self.console = Console(self.bufsize)
         self.threads.append(threading.Thread(target = self.writer))
 
         # start all threads
@@ -312,15 +314,8 @@ if __name__ == "__main__":
                         help="Serial device.  Specify DEVICE@BAUD for "
                         "per-device baudrates.")
 
-    group = parser.add_mutually_exclusive_group(required = False)
-    group.add_argument("--quiet", "-q", action="store_true",
-                       default=argparse.SUPPRESS,
-                       help="Don't print header "
-                       "(default, if stdout is not a tty)")
-    group.add_argument("--no-quiet", "-Q", action="store_true",
-                       default=argparse.SUPPRESS,
-                       help="Print header at startup "
-                       "(default, if stdout is a tty)")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Don't print header")
 
     parser.add_argument("--baudrate", "-b", metavar="BAUD", type=int,
                         help="Default baudrate for all devices", default=115200)
@@ -350,7 +345,6 @@ if __name__ == "__main__":
 
     piped = not sys.stdout.isatty()
     raw = "raw" in args or (piped and "no_raw" not in args)
-    quiet = "quiet" in args or (piped and "no_quiet" not in args)
 
     devs = []
     nodes = []
@@ -381,6 +375,7 @@ if __name__ == "__main__":
                    raw = raw,
                    color = (os.name == "posix" and not args.mono),
                    bufsize = args.bufsize)
-    if not quiet:
-        term.print_header(nodes, bauds, sys.stderr, piped)
+    if not args.quiet:
+        term.print_header(nodes, bauds, sys.stderr)
+
     term.run()
