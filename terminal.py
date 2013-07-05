@@ -44,8 +44,11 @@ if os.name == 'nt':
                     return z
                 if (time.time() - start) > 0.1:
                     return None
+    class MySerial(serial.Serial):
+        def nonblocking_read(self, size=1):
+            return self.read(size)
 elif os.name == 'posix':
-    import termios, select
+    import termios, select, errno
     class Console:
         def __init__(self, bufsize = 65536):
             self.bufsize = bufsize
@@ -75,6 +78,21 @@ elif os.name == 'posix':
                 return ''
             else:
                 return None
+    class MySerial(serial.Serial):
+        def nonblocking_read(self, size=1, timeout = 0.1):
+            [r, w, x] = select.select([self.fd], [], [self.fd], timeout)
+            if r:
+                try:
+                    return os.read(self.fd, size)
+                except OSError as e:
+                    if e.errno == errno.EAGAIN:
+                        return ''
+                    raise
+            elif x:
+                raise SerialException("exception (device disconnected?)")
+            else:
+                return ''
+
 else:
     raise ("Sorry, no terminal implementation for your platform (%s) "
            "available." % sys.platform)
@@ -169,32 +187,35 @@ class Jimterm:
         first = True
         try:
             while self.alive:
-                data = serial.read(1)
-                if not data:
+                # For a POSIX system, do a not-retarded read.
+                data = serial.nonblocking_read(self.bufsize)
+                if not data or data == "":
                     continue
 
                 # don't print a NULL if it's the first character we
                 # read.  This hides startup/port-opening glitches with
                 # some serial devices.
-                if self.suppress_read_firstnull and first and data == '\0':
+                if self.suppress_read_firstnull and first and data[0] == '\0':
                     first = False
-                    continue
+                    data = data[1:]
                 first = False
 
                 if color != self.last_color:
                     self.last_color = color
                     sys.stdout.write(color)
 
-                if (self.raw or
-                    (ord(data) >= 32 and ord(data) < 128) or
-                    data == '\r' or data == '\n' or data == '\t'):
-                    if self.add_cr and data == '\n':
-                        sys.stdout.write('\r' + data)
-                    else:
-                        sys.stdout.write(data)
-                else:
-                    sys.stdout.write('\\x'+("0"+hex(ord(data))[2:])[-2:])
+                if self.add_cr:
+                    data = data.replace('\n', '\r\n')
 
+                if not self.raw:
+                    # Escape unprintable chars
+                    data = data.encode('unicode_escape')
+                    # But these are OK, change them back
+                    data = data.replace("\\n", "\n")
+                    data = data.replace("\\r", "\r")
+                    data = data.replace("\\t", "\t")
+
+                sys.stdout.write(data)
                 sys.stdout.flush()
         except Exception as e:
             sys.stdout.write(color)
@@ -346,7 +367,7 @@ if __name__ == "__main__":
             sys.stderr.write("error: %s specified more than once\n" % node)
             raise SystemExit(1)
         try:
-            dev = serial.Serial(node, baud, rtscts = args.flow)
+            dev = MySerial(node, baud, rtscts = args.flow)
         except serial.serialutil.SerialException:
             sys.stderr.write("error opening %s\n" % node)
             raise SystemExit(1)
