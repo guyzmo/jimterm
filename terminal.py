@@ -23,6 +23,7 @@ import time
 import signal
 import fcntl
 import string
+import re
 
 # Need OS-specific method for getting keyboard input.
 if os.name == 'nt':
@@ -146,6 +147,7 @@ class Jimterm:
         self.add_cr = add_cr
         self.raw = raw
         self.bufsize = bufsize
+        self.quote_re = None
 
     def print_header(self, nodes, bauds, output = sys.stdout):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
@@ -186,40 +188,53 @@ class Jimterm:
             while thread.isAlive():
                 thread.join(0.1)
 
+    def quote_raw(self, data):
+        if self.quote_re is None:
+            matcher = '[^%s]' % re.escape(string.printable)
+            if sys.version_info < (3,):
+                self.quote_re = re.compile(matcher)
+                qf = lambda x: ("\\x%02x" % ord(x.group(0)))
+            else:
+                self.quote_re = re.compile(matcher.encode('ascii'))
+                qf = lambda x: ("\\x%02x" % ord(x.group(0))).encode('ascii')
+            self.quote_func = qf
+        return self.quote_re.sub(self.quote_func, data)
+
     def reader(self, serial, color):
         """loop and copy serial->console"""
         first = True
-        printable = string.printable.translate(None, '\x0b\x0c')
         try:
+            if (sys.version_info < (3,)):
+                null = '\x00'
+            else:
+                null = b'\x00'
             while self.alive:
                 data = serial.nonblocking_read(self.bufsize)
-                if not data or data == "":
+                if not data or not len(data):
                     continue
 
                 # don't print a NULL if it's the first character we
                 # read.  This hides startup/port-opening glitches with
                 # some serial devices.
-                if self.suppress_read_firstnull and first and data[0] == '\0':
+                if self.suppress_read_firstnull and first and data[0] == null:
                     first = False
                     data = data[1:]
                 first = False
 
                 if color != self.last_color:
                     self.last_color = color
-                    sys.stdout.write(color)
+                    os.write(sys.stdout.fileno(), color)
 
                 if self.add_cr:
-                    data = data.replace('\n', '\r\n')
+                    if sys.version_info < (3,):
+                        data = data.replace('\n', '\r\n')
+                    else:
+                        data = data.replace(b'\n', b'\r\n')
 
                 if not self.raw:
-                    def quote(c):
-                        if c in printable:
-                            return c
-                        return '\\x%02x' % ord(c)
-                    data = "".join([quote(c) for c in data])
+                    data = self.quote_raw(data)
 
-                sys.stdout.write(data)
-                sys.stdout.flush()
+                os.write(sys.stdout.fileno(), data)
         except Exception as e:
             self.console.cleanup()
             sys.stdout.write(color)
@@ -232,6 +247,10 @@ class Jimterm:
     def writer(self):
         """loop and copy console->serial until ^C"""
         try:
+            if (sys.version_info < (3,)):
+                ctrlc = '\x03'
+            else:
+                ctrlc = b'\x03'
             while self.alive:
                 try:
                     c = self.console.getkey()
@@ -241,7 +260,7 @@ class Jimterm:
                 if c is None:
                     # No input, try again.
                     continue
-                elif self.console.tty and '\x03' in c:
+                elif self.console.tty and ctrlc in c:
                     # Try to catch ^C that didn't trigger KeyboardInterrupt
                     self.stop()
                     return
