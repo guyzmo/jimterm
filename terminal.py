@@ -143,7 +143,10 @@ class Jimterm:
         self.suppress_read_firstnull = suppress_read_firstnull
         self.last_color = ""
         self.threads = []
-        self.transmit_all = transmit_all
+        if transmit_all:
+            self._serial_target = 'all'
+        else:
+            self._serial_target = 0
         self.add_cr = add_cr
         self.raw = raw
         self.bufsize = bufsize
@@ -203,90 +206,122 @@ class Jimterm:
     def reader(self, serial, color):
         """loop and copy serial->console"""
         first = True
+        if (sys.version_info < (3,)):
+            null = '\x00'
+        else:
+            null = b'\x00'
         try:
-            if (sys.version_info < (3,)):
-                null = '\x00'
-            else:
-                null = b'\x00'
             while self.alive:
-                data = serial.nonblocking_read(self.bufsize)
-                if not data or not len(data):
-                    continue
+                try:
+                    data = serial.nonblocking_read(self.bufsize)
+                    if not data or not len(data):
+                        continue
 
-                # don't print a NULL if it's the first character we
-                # read.  This hides startup/port-opening glitches with
-                # some serial devices.
-                if self.suppress_read_firstnull and first and data[0] == null:
+                    # don't print a NULL if it's the first character we
+                    # read.  This hides startup/port-opening glitches with
+                    # some serial devices.
+                    if self.suppress_read_firstnull and first and data[0] == null:
+                        first = False
+                        data = data[1:]
                     first = False
-                    data = data[1:]
-                first = False
 
-                if color != self.last_color:
-                    self.last_color = color
-                    os.write(sys.stdout.fileno(), color)
+                    if color != self.last_color:
+                        self.last_color = color
+                        os.write(sys.stdout.fileno(), color)
 
-                if self.add_cr:
-                    if sys.version_info < (3,):
-                        data = data.replace('\n', '\r\n')
-                    else:
-                        data = data.replace(b'\n', b'\r\n')
+                    if self.add_cr:
+                        if sys.version_info < (3,):
+                            data = data.replace('\n', '\r\n')
+                        else:
+                            data = data.replace(b'\n', b'\r\n')
 
-                if not self.raw:
-                    data = self.quote_raw(data)
+                    if not self.raw:
+                        data = self.quote_raw(data)
 
-                os.write(sys.stdout.fileno(), data)
-        except Exception as e:
+                    os.write(sys.stdout.fileno(), data)
+                except Exception as e:
+                    self.console.cleanup()
+                    traceback.print_exc()
+                    serial.close()
+                    print ">>> Port " + serial.port + " closed. Waiting for reconnection... "
+                    fail = True
+                    while fail:
+                        try:
+                            if not serial.isOpen():
+                                serial.open()
+                            if serial.isOpen():
+                                fail = False
+                                print "<<< port "+ serial.port + " reconnected!"
+                            time.sleep(1)
+                        except:
+                            pass
+        finally:
             self.console.cleanup()
             sys.stdout.write(color)
             sys.stdout.flush()
-            traceback.print_exc()
             sys.stdout.write(self.color.reset)
             sys.stdout.flush()
-            os._exit(1)
 
     def writer(self):
         """loop and copy console->serial until ^C"""
+        if (sys.version_info < (3,)):
+            cmdkeys = ['\x1b', '\x1d']
+            ctrlc   = '\x03'
+        else:
+            cmdkeys= [b'\x1b', b'\x1d']
+            ctrlc  = b'\x03'
         try:
-            if (sys.version_info < (3,)):
-                ctrlc = '\x03'
-            else:
-                ctrlc = b'\x03'
             while self.alive:
                 try:
-                    c = self.console.getkey()
-                except KeyboardInterrupt:
-                    self.stop()
-                    return
-                if c is None:
-                    # No input, try again.
-                    continue
-                elif self.console.tty and ctrlc in c:
-                    # Try to catch ^C that didn't trigger KeyboardInterrupt
-                    self.stop()
-                    return
-                elif c == '':
-                    # Probably EOF on input.  Wait a tiny bit so we can
-                    # flush the remaining input, then stop.
-                    time.sleep(0.25)
-                    self.stop()
-                    return
-                else:
-                    # Remove bytes we don't want to send
-                    if self.suppress_write_bytes is not None:
-                        c = c.translate(None, self.suppress_write_bytes)
-
-                    # Send character
-                    if self.transmit_all:
-                        for serial in self.serials:
-                            serial.write(c)
+                    try:
+                        c = self.console.getkey()
+                    except KeyboardInterrupt:
+                        self.stop()
+                        return
+                    if c is None:
+                        # No input, try again.
+                        continue
+                    elif self.console.tty and ctrlc in c:
+                        # Try to catch ^C that didn't trigger KeyboardInterrupt
+                        self.stop()
+                        return
+                    elif not cmd and c in cmdkeys:
+                        cmd = True
+                        continue
+                    elif c == '':
+                        # Probably EOF on input.  Wait a tiny bit so we can
+                        # flush the remaining input, then stop.
+                        time.sleep(0.25)
+                        self.stop()
+                        return
                     else:
-                        self.serials[0].write(c)
-        except Exception as e:
+                        # Remove bytes we don't want to send
+                        if self.suppress_write_bytes is not None:
+                            c = c.translate(None, self.suppress_write_bytes)
+
+                        # Send character
+                        if self.transmit_all:
+                            for serial in self.serials:
+                                self.write(c)
+                except Exception as e:
+                    self.console.cleanup()
+                    traceback.print_exc()
+                    print ">>> Port " + serial.port + " closed. Waiting for reconnection... "
+                    fail = True
+                    while fail:
+                        try:
+                            if not serial.isOpen():
+                                serial.open()
+                            if serial.isOpen():
+                                fail = False
+                                print "<<< port "+ serial.port + " reconnected!"
+                            time.sleep(1)
+                        except:
+                            pass
+        finally:
             self.console.cleanup()
             sys.stdout.write(self.color.reset)
             sys.stdout.flush()
-            traceback.print_exc()
-            os._exit(1)
 
     def run(self):
         # Set all serial port timeouts to 0.1 sec
