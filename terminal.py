@@ -156,12 +156,12 @@ class Jimterm:
 
     def print_header(self, nodes, bauds, output = sys.stdout):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
-            output.write(self.color.code(n)
+            output.write(self.color.code(n) + "Port #" + str(n) + ": "
                          + node + ", " + str(baud) + " baud"
                          + self.color.reset + "\n")
         if sys.stdin.isatty():
-            output.write("^C to exit\n")
-            output.write("----------\n")
+            output.write("<ESC-?> for help ; <C-c> <ESC><ESC> for exit\n")
+            output.write("-------------------------------\n")
         output.flush()
 
     def start(self):
@@ -265,6 +265,41 @@ class Jimterm:
             sys.stdout.write(self.color.reset)
             sys.stdout.flush()
 
+
+    def handle_command(self, c, cmdkeys):
+        # if command is a number, it chooses the target serial port
+        sys.stdout.write(self.color.reset)
+        if c.isdigit() and int(c) <= 9 and int(c) >= 0:
+            self._serial_target = int(c)
+            print ">>> Sending input to port: "+self.serials[int(c)].port
+        # if command is 'a', it sends to all
+        elif c == 'a':
+            self._serial_target = 'all'
+            print ">>> Sending input to all ports"
+        # double command character stops the terminal
+        elif c in cmdkeys:
+            print ">>> Goodbye!"
+            return False
+        # '?' gives an help
+        elif c == '?':
+            print ">>> List of commands:"
+            print ">>>      0-9: choose serial terminal to send commands to"
+            print ">>>      a  : send commands to all terminals"
+            print ">>>      ^] : exits"
+        else:
+            sys.stdout.write(self.color.reset)
+            print ">>> Unknown command: "+c
+        sys.stdout.write(self.last_color)
+        sys.stdout.flush()
+        return True
+
+    def transmit(self, c):
+        if self._serial_target == 'all':
+            for serial in self.serials:
+                serial.write(c)
+        else:
+            self.serials[self._serial_target].write(c)
+
     def writer(self):
         """loop and copy console->serial until ^C"""
         if (sys.version_info < (3,)):
@@ -274,6 +309,7 @@ class Jimterm:
             cmdkeys= [b'\x1b', b'\x1d']
             ctrlc  = b'\x03'
         try:
+            cmd = None
             while self.alive:
                 try:
                     try:
@@ -301,11 +337,15 @@ class Jimterm:
                         # Remove bytes we don't want to send
                         if self.suppress_write_bytes is not None:
                             c = c.translate(None, self.suppress_write_bytes)
-
+                        # if the command character is sent, handle the command
+                        if not cmd is None:
+                            if not self.handle_command(c, cmdkeys):
+                                self.stop()
+                                return
+                            cmd = None
                         # Send character
-                        if self.transmit_all:
-                            for serial in self.serials:
-                                self.write(c)
+                        else:
+                            self.transmit(c)
                 except Exception as e:
                     self.console.cleanup()
                     if self.verbose:
