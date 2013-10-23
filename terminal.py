@@ -132,7 +132,8 @@ class Jimterm:
                  add_cr = False,
                  raw = True,
                  color = True,
-                 bufsize = 65536):
+                 bufsize = 65536,
+                 verbose=False):
 
         self.color = JimtermColor()
         if color:
@@ -151,6 +152,7 @@ class Jimterm:
         self.raw = raw
         self.bufsize = bufsize
         self.quote_re = None
+        self.verbose = verbose
 
     def print_header(self, nodes, bauds, output = sys.stdout):
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
@@ -241,7 +243,8 @@ class Jimterm:
                     os.write(sys.stdout.fileno(), data)
                 except Exception as e:
                     self.console.cleanup()
-                    traceback.print_exc()
+                    if self.verbose:
+                        traceback.print_exc()
                     serial.close()
                     print ">>> Port " + serial.port + " closed. Waiting for reconnection... "
                     fail = True
@@ -305,7 +308,8 @@ class Jimterm:
                                 self.write(c)
                 except Exception as e:
                     self.console.cleanup()
-                    traceback.print_exc()
+                    if self.verbose:
+                        traceback.print_exc()
                     print ">>> Port " + serial.port + " closed. Waiting for reconnection... "
                     fail = True
                     while fail:
@@ -385,6 +389,8 @@ if __name__ == "__main__":
                         help="Enable RTS/CTS flow control")
     parser.add_argument("--bufsize", "-z", metavar="SIZE", type=int,
                         help="Buffer size for reads and writes", default=65536)
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Print stacktraces on error")
 
     group = parser.add_mutually_exclusive_group(required = False)
     group.add_argument("--raw", "-r", action="store_true",
@@ -429,7 +435,8 @@ if __name__ == "__main__":
                    add_cr = args.crlf,
                    raw = raw,
                    color = (os.name == "posix" and not args.mono),
-                   bufsize = args.bufsize)
+                   bufsize = args.bufsize,
+                   verbose = args.verbose)
     if not args.quiet:
         term.print_header(nodes, bauds, sys.stderr)
 
