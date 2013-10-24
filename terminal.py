@@ -154,12 +154,14 @@ class Jimterm:
         self.quote_re = None
         self.verbose = verbose
 
-    def print_header(self, nodes, bauds, output = sys.stdout):
+    def print_header(self, output = sys.stdout, list_only=False):
+        nodes = [serial.port for serial in self.serials]
+        bauds = [serial.baudrate for serial in self.serials]
         for (n, (node, baud)) in enumerate(zip(nodes, bauds)):
             output.write(self.color.code(n) + "Port #" + str(n) + ": "
                          + node + ", " + str(baud) + " baud"
                          + self.color.reset + "\n")
-        if sys.stdin.isatty():
+        if sys.stdin.isatty() and not list_only:
             output.write("<ESC-?> for help ; <C-c> <ESC><ESC> for exit\n")
             output.write("-------------------------------\n")
         output.flush()
@@ -277,6 +279,10 @@ class Jimterm:
             self._serial_target = 'all'
             print ">>> Sending input to all ports"
         # double command character stops the terminal
+        elif c == 'l':
+            print ">>> List of ports:"
+            self.print_header(list_only=True)
+            print ">>> --------------"
         elif c in cmdkeys:
             print ">>> Goodbye!"
             return False
@@ -285,6 +291,7 @@ class Jimterm:
             print ">>> List of commands:"
             print ">>>      0-9: choose serial terminal to send commands to"
             print ">>>      a  : send commands to all terminals"
+            print ">>>      l  : lists all terminals"
             print ">>>      ^] : exits"
         else:
             sys.stdout.write(self.color.reset)
@@ -449,7 +456,6 @@ if __name__ == "__main__":
 
     devs = []
     nodes = []
-    bauds = []
     for (n, device) in enumerate(args.device):
         m = re.search(r"^(.*)@([1-9][0-9]*)$", device)
         if m is not None:
@@ -467,7 +473,6 @@ if __name__ == "__main__":
             sys.stderr.write("error opening %s\n" % node)
             raise SystemExit(1)
         nodes.append(node)
-        bauds.append(baud)
         devs.append(dev)
 
     term = Jimterm(devs,
@@ -478,6 +483,6 @@ if __name__ == "__main__":
                    bufsize = args.bufsize,
                    verbose = args.verbose)
     if not args.quiet:
-        term.print_header(nodes, bauds, sys.stderr)
+        term.print_header(sys.stderr)
 
     term.run()
